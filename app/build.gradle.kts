@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.dayrecorder"
         minSdk = 30
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.4"
+        versionCode = 7
+        versionName = "1.5"
     }
 
     buildTypes {
@@ -82,4 +82,5 @@ dependencies {
   implementation(libs.androidx.navigation3.runtime)
   implementation(libs.androidx.lifecycle.viewmodel.navigation3)
   implementation(libs.play.services.wearable)
+  implementation(libs.wear.watchface.complications.data.source.ktx)
 }

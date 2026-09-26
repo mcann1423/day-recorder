@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Day Recorder</string>
+    <string name="recorder_complication_label">Start Day Recorder</string>
 </resources>

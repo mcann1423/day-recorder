@@ -30,6 +30,30 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".complication.StartRecordingActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@style/Theme.DayRecorder.NoDisplay" />
+
+        <service
+            android:name=".complication.RecorderComplicationDataSourceService"
+            android:exported="true"
+            android:icon="@drawable/ic_complication_record"
+            android:label="@string/recorder_complication_label"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
+            <intent-filter>
+                <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
+            </intent-filter>
+            <meta-data
+                android:name="android.support.wearable.complications.SUPPORTED_TYPES"
+                android:value="SHORT_TEXT,ICON" />
+            <meta-data
+                android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
+                android:value="0" />
+        </service>
+
         <service
             android:name=".recording.RecorderService"
             android:exported="false"

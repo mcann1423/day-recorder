@@ -16,6 +16,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.example.dayrecorder.complication.RecorderComplicationUpdates
 import com.example.dayrecorder.transfer.WatchTransferQueue
 import java.io.File
 import java.text.SimpleDateFormat
@@ -65,6 +66,7 @@ class RecorderService : Service() {
       .remove(RecorderContract.KEY_LAST_ERROR)
       .remove(RecorderContract.KEY_STOP_REASON)
       .apply()
+    RecorderComplicationUpdates.request(this)
     startForegroundNotification()
     worker = Thread(::recordSession, "day-recorder").also { it.start() }
   }
@@ -73,6 +75,7 @@ class RecorderService : Service() {
     if (worker?.isAlive != true) return
     requestedState = state
     prefs.edit().putString(RecorderContract.KEY_STATE, state).apply()
+    RecorderComplicationUpdates.request(this)
     updateNotification()
     worker?.interrupt()
   }
@@ -82,6 +85,7 @@ class RecorderService : Service() {
     prefs.edit().putString(RecorderContract.KEY_STOP_REASON, RecorderContract.STOP_REASON_USER).apply()
     worker?.interrupt()
     prefs.edit().putString(RecorderContract.KEY_STATE, RecorderContract.STATE_IDLE).apply()
+    RecorderComplicationUpdates.request(this)
   }
 
   private fun recordSession() {
@@ -123,6 +127,7 @@ class RecorderService : Service() {
         .apply()
     } finally {
       prefs.edit().putString(RecorderContract.KEY_STATE, requestedState).apply()
+      RecorderComplicationUpdates.request(this)
       queueTransfersNow()
       stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf()

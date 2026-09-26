@@ -17,6 +17,10 @@ artifacts.
 ## Current behavior
 
 - **Start day**, **Pause/Resume**, and **End day** controls.
+- Provides a **Start Day Recorder** watch-face complication. A tap starts
+  recording immediately when microphone permission has already been granted;
+  otherwise it opens the app to request permission. The complication displays
+  **REC** while the recorder is active or paused.
 - Records 16 kHz mono AAC-LC at 24 kbps directly through Android's platform
   `MediaRecorder` pipeline, avoiding application-level PCM processing.
 - Uses fixed fifteen-minute chunks, avoiding high-frequency amplitude polling.
@@ -78,6 +82,10 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 The first launch requests microphone and notification permission. Tap **Start
 day**, then return to the watch face. The persistent notification confirms that
 capture remains active.
+
+To start future sessions from the watch face, edit the current watch face, pick
+an available complication slot, and choose **Start Day Recorder**. The exact
+watch-face editing gesture depends on the selected Samsung watch face.
 
 ## Install the phone companion
 
