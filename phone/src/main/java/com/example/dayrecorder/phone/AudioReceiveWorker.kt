@@ -1,8 +1,6 @@
 package com.example.dayrecorder.phone
 
-import android.content.ContentValues
 import android.content.Context
-import android.provider.MediaStore
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.google.android.gms.tasks.Tasks
@@ -11,11 +9,6 @@ import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.InputStream
-import java.security.DigestInputStream
-import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class AudioReceiveWorker(
   context: Context,
@@ -23,6 +16,7 @@ class AudioReceiveWorker(
 ) : Worker(context, params) {
   private val prefs = applicationContext.getSharedPreferences(PhoneContract.PREFS, Context.MODE_PRIVATE)
   private val dataClient = Wearable.getDataClient(applicationContext)
+  private val recordingStorage = PhoneRecordingStorage(applicationContext)
 
   override fun doWork(): Result {
     var failed = false
@@ -62,12 +56,13 @@ class AudioReceiveWorker(
       val response = Tasks.await(dataClient.getFdForAsset(asset)) ?: return false
       val input = response.inputStream
       if (!saveVerifiedAudio(input, fileName, expectedSize, expectedHash, recordedAt)) return false
-      prefs.edit()
+      val saved = prefs.edit()
         .putBoolean(PhoneContract.RECEIVED_PREFIX + expectedHash, true)
         .putInt(PhoneContract.KEY_RECEIVED_COUNT, prefs.getInt(PhoneContract.KEY_RECEIVED_COUNT, 0) + 1)
         .putString(PhoneContract.KEY_LAST_FILE, fileName)
         .remove(PhoneContract.KEY_LAST_ERROR)
-        .apply()
+        .commit()
+      if (!saved) return false
     }
 
     val id = fileName.removeSuffix(".m4a")
@@ -88,43 +83,7 @@ class AudioReceiveWorker(
     expectedHash: String,
     recordedAt: Long,
   ): Boolean {
-    val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(recordedAt))
-    val values = ContentValues().apply {
-      put(MediaStore.Audio.Media.DISPLAY_NAME, fileName)
-      put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
-      put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/Day Recorder/$day")
-      put(MediaStore.Audio.Media.IS_PENDING, 1)
-    }
-    val resolver = applicationContext.contentResolver
-    val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-    return try {
-      val digest = MessageDigest.getInstance("SHA-256")
-      var copied = 0L
-      resolver.openOutputStream(uri, "w")!!.use { output ->
-        DigestInputStream(input, digest).use { source ->
-          val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-          while (true) {
-            val count = source.read(buffer)
-            if (count < 0) break
-            if (count > 0) {
-              output.write(buffer, 0, count)
-              copied += count
-            }
-          }
-        }
-      }
-      val actualHash = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
-      if (copied != expectedSize || actualHash != expectedHash) {
-        resolver.delete(uri, null, null)
-        false
-      } else {
-        resolver.update(uri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
-        true
-      }
-    } catch (error: Throwable) {
-      resolver.delete(uri, null, null)
-      throw error
-    }
+    return recordingStorage.saveVerifiedAudio(input, fileName, expectedSize, expectedHash, recordedAt)
   }
 
   private fun sanitizeFileName(name: String): String? =

@@ -43,6 +43,14 @@ generated build artifacts.
   immediately.
 - The phone verifies file length and SHA-256 before acknowledging receipt. The
   watch deletes its copy only after receiving that acknowledgement.
+- The phone shows the number and total size of stored recordings across the
+  default archive and folders previously selected through Android's system
+  folder picker. Changing the destination affects future recordings and does
+  not move existing files.
+- The phone archive never deletes recordings automatically. It warns when
+  recordings are at least 180 days old or consume 20 GB, and provides a
+  confirmed **Purge recordings** action. Shared-media deletion uses Android's
+  system approval dialog; no broad file-access permission is requested.
 - Unacknowledged recordings produce a warning after three days and are removed
   after seven days or when pending storage exceeds 1 GB. Stale partial files are
   removed after 24 hours. Settings reports pending storage and provides a

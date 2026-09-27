@@ -81,4 +81,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Day Recorder v${VERSION_NAME} (Build ${VERSION_CODE})" \
-            --notes "Signed Wear OS and Android phone builds. Both apps provide user-initiated GitHub updates with checksum and signing-certificate verification; the watch also enforces bounded recording retention."
+            --notes "Signed Wear OS and Android phone builds. The phone companion adds selectable recording storage, archive inventory, confirmed purge, and non-destructive age/storage warnings. Both apps provide user-initiated GitHub updates with checksum and signing-certificate verification."

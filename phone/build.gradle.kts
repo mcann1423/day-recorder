@@ -10,8 +10,8 @@ android {
     applicationId = "com.example.dayrecorder"
     minSdk = 29
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.1"
+    versionCode = 3
+    versionName = "1.2"
   }
 
   val releaseKeystorePath = providers.environmentVariable("DAY_RECORDER_KEYSTORE_PATH").orNull
@@ -53,6 +53,7 @@ kotlin {
 dependencies {
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.work.runtime.ktx)
+  implementation("androidx.documentfile:documentfile:1.1.0")
   implementation(libs.play.services.wearable)
   testImplementation(libs.junit)
   testImplementation("org.json:json:20240303")
