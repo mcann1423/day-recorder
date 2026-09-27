@@ -51,14 +51,18 @@ jobs:
           set -euo pipefail
           version_name=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
           version_code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' app/build.gradle.kts | head -1)
+          phone_version_name=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' phone/build.gradle.kts | head -1)
+          phone_version_code=$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' phone/build.gradle.kts | head -1)
           test -n "$version_name"
           test -n "$version_code"
+          test -n "$phone_version_name"
+          test -n "$phone_version_code"
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             test "$GITHUB_REF_NAME" = "v$version_name"
           fi
           mkdir -p release-assets
           watch_name="day-recorder-watch-v${version_name}-build${version_code}-release.apk"
-          phone_name="day-recorder-phone-v1.0-build1-release.apk"
+          phone_name="day-recorder-phone-v${phone_version_name}-build${phone_version_code}-release.apk"
           cp app/build/outputs/apk/release/app-release.apk "release-assets/$watch_name"
           cp phone/build/outputs/apk/release/phone-release.apk "release-assets/$phone_name"
           (cd release-assets && sha256sum "$watch_name" > "$watch_name.sha256")
@@ -77,4 +81,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Day Recorder v${VERSION_NAME} (Build ${VERSION_CODE})" \
-            --notes "Signed Wear OS and Android phone builds. The watch release adds user-initiated GitHub updates and bounded on-watch recording retention."
+            --notes "Signed Wear OS and Android phone builds. Both apps provide user-initiated GitHub updates with checksum and signing-certificate verification; the watch also enforces bounded recording retention."

@@ -21,7 +21,7 @@ generated build artifacts.
   recording immediately when microphone permission has already been granted;
   otherwise it opens the app to request permission. The complication displays
   **REC** while the recorder is active or paused.
-- Provides a user-initiated **Check for update** action in Settings. GitHub is
+- Both the watch and phone provide a user-initiated **Check for update** action. GitHub is
   contacted only on request; downloads must match both the published SHA-256
   checksum and the installed app's signing certificate before Android Installer
   is opened.
@@ -60,6 +60,9 @@ Signing credentials belong in GitHub Actions secrets and must never be committed
 On the watch, open **Settings → Check for update** while the recorder is idle.
 If a newer signed build exists, tap **Install** and confirm Android's package
 installer. The first update may require enabling installs from Day Recorder.
+The Android phone companion exposes the same check and install flow on its main
+screen. Each app selects only its own APK from the paired GitHub release and
+verifies both the checksum and signing certificate before installation.
 
 ## Build
 
