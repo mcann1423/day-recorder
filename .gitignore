@@ -19,3 +19,6 @@ local.properties
 /watch-recordings/
 *.m4a
 *.apk
+*.jks
+*.keystore
+signing.properties

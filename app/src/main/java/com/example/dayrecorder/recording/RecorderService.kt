@@ -30,6 +30,7 @@ class RecorderService : Service() {
   private val transferQueue by lazy { WatchTransferQueue(this) }
   private val batteryPolicy = BatteryPolicy()
   private val dailyTransferPolicy = DailyTransferPolicy()
+  private val retentionManager by lazy { RecordingRetentionManager(this) }
   private var nextBatteryCheckAt = Long.MAX_VALUE
   private var scheduledTransferAt = Long.MAX_VALUE
   @Volatile private var activeChunk: File? = null
@@ -91,6 +92,7 @@ class RecorderService : Service() {
   private fun recordSession() {
     val sessionDeadline = SystemClock.elapsedRealtime() + RecorderContract.SESSION_LIMIT_MS
     try {
+      retentionManager.maintain(activeChunk?.name)
       while (
         requestedState != RecorderContract.STATE_IDLE &&
           SystemClock.elapsedRealtime() < sessionDeadline
@@ -228,6 +230,7 @@ class RecorderService : Service() {
       .putString(RecorderContract.KEY_LAST_CHUNK, completedFile.name)
       .apply()
     updateNotification()
+    retentionManager.maintain(activeChunk?.name)
   }
 
   private fun maybeStopForLowBattery(now: Long = SystemClock.elapsedRealtime()) {

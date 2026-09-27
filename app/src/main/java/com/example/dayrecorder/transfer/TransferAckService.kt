@@ -2,6 +2,7 @@ package com.example.dayrecorder.transfer
 
 import android.os.Environment
 import com.example.dayrecorder.recording.RecorderContract
+import com.example.dayrecorder.recording.RecordingRetentionManager
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.Wearable
@@ -49,5 +50,6 @@ class TransferAckService : WearableListenerService() {
       deleteDataItems(android.net.Uri.parse("wear://*${TransferProtocol.AUDIO_PREFIX}${TransferProtocol.idFor(name)}"))
       deleteDataItems(android.net.Uri.parse("wear://*$ackPath"))
     }
+    RecordingRetentionManager(this).maintain()
   }
 }

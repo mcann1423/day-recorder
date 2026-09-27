@@ -14,9 +14,28 @@ android {
     versionName = "1.0"
   }
 
+  val releaseKeystorePath = providers.environmentVariable("DAY_RECORDER_KEYSTORE_PATH").orNull
+  val releaseKeystorePassword = providers.environmentVariable("DAY_RECORDER_KEYSTORE_PASSWORD").orNull
+  val releaseKeyAlias = providers.environmentVariable("DAY_RECORDER_KEY_ALIAS").orNull
+  val releaseKeyPassword = providers.environmentVariable("DAY_RECORDER_KEY_PASSWORD").orNull
+  signingConfigs {
+    if (
+      releaseKeystorePath != null && releaseKeystorePassword != null &&
+      releaseKeyAlias != null && releaseKeyPassword != null
+    ) {
+      create("release") {
+        storeFile = file(releaseKeystorePath)
+        storePassword = releaseKeystorePassword
+        keyAlias = releaseKeyAlias
+        keyPassword = releaseKeyPassword
+      }
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
+      signingConfig = signingConfigs.findByName("release")
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }

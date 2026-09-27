@@ -10,9 +10,9 @@ to ten hours; finalized recordings transfer safely to the phone.
 - `phone`: the Android companion that verifies, stores, and acknowledges audio
   transferred from the watch.
 
-Installable debug APKs are published as assets on this repository's GitHub
-Releases page. They are kept out of Git history because they are generated build
-artifacts.
+Installable, release-signed APKs are published as assets on this repository's
+GitHub Releases page. They are kept out of Git history because they are
+generated build artifacts.
 
 ## Current behavior
 
@@ -21,6 +21,10 @@ artifacts.
   recording immediately when microphone permission has already been granted;
   otherwise it opens the app to request permission. The complication displays
   **REC** while the recorder is active or paused.
+- Provides a user-initiated **Check for update** action in Settings. GitHub is
+  contacted only on request; downloads must match both the published SHA-256
+  checksum and the installed app's signing certificate before Android Installer
+  is opened.
 - Records 16 kHz mono AAC-LC at 24 kbps directly through Android's platform
   `MediaRecorder` pipeline, avoiding application-level PCM processing.
 - Uses fixed fifteen-minute chunks, avoiding high-frequency amplitude polling.
@@ -39,8 +43,23 @@ artifacts.
   immediately.
 - The phone verifies file length and SHA-256 before acknowledging receipt. The
   watch deletes its copy only after receiving that acknowledgement.
+- Unacknowledged recordings produce a warning after three days and are removed
+  after seven days or when pending storage exceeds 1 GB. Stale partial files are
+  removed after 24 hours. Settings reports pending storage and provides a
+  confirmed manual purge action; active recordings are always excluded.
 
 Transcription and voice-only retention are outside this milestone.
+
+## Releases and watch updates
+
+Pushing a version tag such as `v1.6` runs `.github/workflows/release.yml`. The
+workflow tests and lints both modules, builds them with the same protected
+release-signing key, publishes watch and phone APKs, and attaches SHA-256 files.
+Signing credentials belong in GitHub Actions secrets and must never be committed.
+
+On the watch, open **Settings → Check for update** while the recorder is idle.
+If a newer signed build exists, tap **Install** and confirm Android's package
+installer. The first update may require enabling installs from Day Recorder.
 
 ## Build
 
@@ -109,8 +128,8 @@ watch screen shows files waiting for acknowledgement and the acknowledged
 count. A disconnected phone is safe: Data Layer retains queued assets and
 synchronizes them when the devices reconnect.
 
-The watch and phone APKs must use the same application ID and signing key. The
-two debug APKs produced by this project already satisfy that requirement.
+The watch and phone APKs must use the same application ID and signing key. Use
+the paired release assets from the same GitHub Release.
 
 ## Pull test recordings
 

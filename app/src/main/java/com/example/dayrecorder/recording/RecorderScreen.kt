@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,13 +22,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.dayrecorder.update.GitHubUpdateClient
+import com.example.dayrecorder.update.InstallRequestResult
+import com.example.dayrecorder.update.UpdateCheckResult
+import com.example.dayrecorder.update.UpdateRelease
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 
 @Composable
 fun RecorderScreen(
@@ -46,8 +57,19 @@ fun RecorderScreen(
   var queuedCount by remember { mutableIntStateOf(0) }
   var transferredCount by remember { mutableIntStateOf(0) }
   var transferError by remember { mutableStateOf("") }
+  var pendingBytes by remember { mutableStateOf(0L) }
+  var oldestPendingAt by remember { mutableStateOf(0L) }
+  var retentionWarningCount by remember { mutableIntStateOf(0) }
+  var retentionPurgedCount by remember { mutableIntStateOf(0) }
+  var lastRetentionAction by remember { mutableStateOf("") }
   var showSettings by remember { mutableStateOf(false) }
+  var confirmPurge by remember { mutableStateOf(false) }
+  var updateBusy by remember { mutableStateOf(false) }
+  var updateMessage by remember { mutableStateOf("") }
+  var availableUpdate by remember { mutableStateOf<UpdateRelease?>(null) }
   var powerSaveMode by remember { mutableStateOf(isPowerSaveMode()) }
+  val scope = rememberCoroutineScope()
+  val updateClient = remember(context) { GitHubUpdateClient(context) }
   val packageInfo = remember(context) {
     context.packageManager.getPackageInfo(context.packageName, 0)
   }
@@ -55,6 +77,7 @@ fun RecorderScreen(
   val buildNumber = packageInfo.longVersionCode.toString()
 
   LaunchedEffect(Unit) {
+    withContext(Dispatchers.IO) { RecordingRetentionManager(context).maintain() }
     while (true) {
       val prefs = context.getSharedPreferences(RecorderContract.PREFS, Context.MODE_PRIVATE)
       state = prefs.getString(RecorderContract.KEY_STATE, RecorderContract.STATE_IDLE) ?: RecorderContract.STATE_IDLE
@@ -65,6 +88,11 @@ fun RecorderScreen(
       queuedCount = prefs.getInt(RecorderContract.KEY_QUEUED_COUNT, 0)
       transferredCount = prefs.getInt(RecorderContract.KEY_TRANSFERRED_COUNT, 0)
       transferError = prefs.getString(RecorderContract.KEY_TRANSFER_ERROR, "") ?: ""
+      pendingBytes = prefs.getLong(RecorderContract.KEY_PENDING_BYTES, 0L)
+      oldestPendingAt = prefs.getLong(RecorderContract.KEY_OLDEST_PENDING_AT, 0L)
+      retentionWarningCount = prefs.getInt(RecorderContract.KEY_RETENTION_WARNING_COUNT, 0)
+      retentionPurgedCount = prefs.getInt(RecorderContract.KEY_RETENTION_PURGED_COUNT, 0)
+      lastRetentionAction = prefs.getString(RecorderContract.KEY_LAST_RETENTION_ACTION, "") ?: ""
       powerSaveMode = isPowerSaveMode()
       delay(1_000)
     }
@@ -82,11 +110,72 @@ fun RecorderScreen(
       queuedCount = queuedCount,
       transferredCount = transferredCount,
       transferError = transferError,
+      pendingBytes = pendingBytes,
+      oldestPendingAt = oldestPendingAt,
+      retentionWarningCount = retentionWarningCount,
+      retentionPurgedCount = retentionPurgedCount,
+      lastRetentionAction = lastRetentionAction,
       powerSaveMode = powerSaveMode,
       versionName = versionName,
       buildNumber = buildNumber,
+      updateBusy = updateBusy,
+      updateMessage = updateMessage,
+      availableUpdate = availableUpdate,
       onBack = { showSettings = false },
+      onPurge = { confirmPurge = true },
+      onCheckUpdate = {
+        updateBusy = true
+        updateMessage = "Checking GitHub…"
+        scope.launch {
+          runCatching { withContext(Dispatchers.IO) { updateClient.check(packageInfo.longVersionCode) } }
+            .onSuccess { result ->
+              when (result) {
+                is UpdateCheckResult.Available -> {
+                  availableUpdate = result.release
+                  updateMessage = "Version ${result.release.versionName} is available"
+                }
+                is UpdateCheckResult.Current -> {
+                  availableUpdate = null
+                  updateMessage = "You have the latest version (${result.latestVersionName})"
+                }
+              }
+            }
+            .onFailure { error -> updateMessage = error.message ?: "Update check failed" }
+          updateBusy = false
+        }
+      },
+      onInstallUpdate = { release ->
+        updateBusy = true
+        updateMessage = "Downloading and verifying…"
+        scope.launch {
+          runCatching { withContext(Dispatchers.IO) { updateClient.downloadAndVerify(release) } }
+            .onSuccess { apk ->
+              updateMessage = when (updateClient.requestInstall(apk)) {
+                InstallRequestResult.Launched -> "Confirm the update in Android Installer"
+                InstallRequestResult.PermissionRequired -> "Allow this source, then tap Install again"
+              }
+            }
+            .onFailure { error -> updateMessage = error.message ?: "Update download failed" }
+          updateBusy = false
+        }
+      },
     )
+    if (confirmPurge) {
+      AlertDialog(
+        onDismissRequest = { confirmPurge = false },
+        title = { Text("Purge recordings?") },
+        text = { Text("Deletes all completed and stale recordings still stored on this watch.") },
+        confirmButton = {
+          TextButton(
+            onClick = {
+              confirmPurge = false
+              scope.launch { withContext(Dispatchers.IO) { RecordingRetentionManager(context).purgeAll() } }
+            },
+          ) { Text("Delete") }
+        },
+        dismissButton = { TextButton(onClick = { confirmPurge = false }) { Text("Cancel") } },
+      )
+    }
     return
   }
 
@@ -127,10 +216,21 @@ private fun RecorderSettingsScreen(
   queuedCount: Int,
   transferredCount: Int,
   transferError: String,
+  pendingBytes: Long,
+  oldestPendingAt: Long,
+  retentionWarningCount: Int,
+  retentionPurgedCount: Int,
+  lastRetentionAction: String,
   powerSaveMode: Boolean,
   versionName: String,
   buildNumber: String,
+  updateBusy: Boolean,
+  updateMessage: String,
+  availableUpdate: UpdateRelease?,
   onBack: () -> Unit,
+  onPurge: () -> Unit,
+  onCheckUpdate: () -> Unit,
+  onInstallUpdate: (UpdateRelease) -> Unit,
 ) {
   Column(
     modifier =
@@ -152,10 +252,37 @@ private fun RecorderSettingsScreen(
     StatLine("Transfers", "3:00 PM and session end")
     StatLine("Phone received", transferredCount.toString())
     StatLine("Queued", queuedCount.toString())
+    StatLine("Watch retention", "7 days / 1 GB")
+    StatLine("Pending storage", formatBytes(pendingBytes))
+    if (oldestPendingAt > 0L) StatLine("Oldest pending", formatAge(oldestPendingAt))
+    if (retentionWarningCount > 0) {
+      ErrorLine("Retention", "$retentionWarningCount recording(s) are over 3 days old")
+    }
+    if (retentionPurgedCount > 0) StatLine("Files purged", retentionPurgedCount.toString())
+    if (lastRetentionAction.isNotBlank()) StatLine("Last cleanup", lastRetentionAction)
     if (lastChunk.isNotBlank()) StatLine("Last recording", lastChunk)
     if (stopReason.isNotBlank()) StatLine("Last stop", stopReason)
     if (lastError.isNotBlank()) ErrorLine("Recording", lastError)
     if (transferError.isNotBlank()) ErrorLine("Transfer", transferError)
+    Spacer(Modifier.height(18.dp))
+    OutlinedButton(
+      enabled = state == RecorderContract.STATE_IDLE && !updateBusy,
+      onClick = onCheckUpdate,
+    ) { Text(if (updateBusy) "Working…" else "Check for update") }
+    availableUpdate?.let { release ->
+      Spacer(Modifier.height(8.dp))
+      Button(
+        enabled = state == RecorderContract.STATE_IDLE && !updateBusy,
+        onClick = { onInstallUpdate(release) },
+      ) { Text("Install ${release.versionName}") }
+      if (release.releaseNotes.isNotBlank()) StatLine("Release notes", release.releaseNotes)
+    }
+    if (updateMessage.isNotBlank()) StatLine("Updater", updateMessage)
+    Spacer(Modifier.height(10.dp))
+    OutlinedButton(
+      enabled = state == RecorderContract.STATE_IDLE && pendingBytes > 0L,
+      onClick = onPurge,
+    ) { Text("Purge recordings") }
     Spacer(Modifier.height(18.dp))
   }
 }
@@ -181,3 +308,19 @@ private fun String.displayName(): String =
     RecorderContract.STATE_ERROR -> "Error"
     else -> "Not recording"
   }
+
+private fun formatBytes(bytes: Long): String =
+  when {
+    bytes >= 1_024L * 1_024L * 1_024L -> "%.1f GB".format(bytes / (1_024.0 * 1_024.0 * 1_024.0))
+    bytes >= 1_024L * 1_024L -> "%.1f MB".format(bytes / (1_024.0 * 1_024.0))
+    bytes >= 1_024L -> "%.1f KB".format(bytes / 1_024.0)
+    else -> "$bytes B"
+  }
+
+private fun formatAge(timestamp: Long): String {
+  val ageMs = (System.currentTimeMillis() - timestamp).coerceAtLeast(0L)
+  val days = TimeUnit.MILLISECONDS.toDays(ageMs)
+  if (days > 0) return "$days day${if (days == 1L) "" else "s"}"
+  val hours = TimeUnit.MILLISECONDS.toHours(ageMs)
+  return "$hours hour${if (hours == 1L) "" else "s"}"
+}

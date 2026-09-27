@@ -17,6 +17,11 @@ object RecorderContract {
   const val KEY_QUEUED_COUNT = "queued_count"
   const val KEY_LAST_TRANSFER = "last_transfer"
   const val KEY_TRANSFER_ERROR = "transfer_error"
+  const val KEY_PENDING_BYTES = "pending_bytes"
+  const val KEY_OLDEST_PENDING_AT = "oldest_pending_at"
+  const val KEY_RETENTION_WARNING_COUNT = "retention_warning_count"
+  const val KEY_RETENTION_PURGED_COUNT = "retention_purged_count"
+  const val KEY_LAST_RETENTION_ACTION = "last_retention_action"
 
   const val STATE_IDLE = "idle"
   const val STATE_RECORDING = "recording"

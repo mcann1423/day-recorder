@@ -11,13 +11,32 @@ android {
         applicationId = "com.example.dayrecorder"
         minSdk = 30
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.5"
+        versionCode = 8
+        versionName = "1.6"
+    }
+
+    val releaseKeystorePath = providers.environmentVariable("DAY_RECORDER_KEYSTORE_PATH").orNull
+    val releaseKeystorePassword = providers.environmentVariable("DAY_RECORDER_KEYSTORE_PASSWORD").orNull
+    val releaseKeyAlias = providers.environmentVariable("DAY_RECORDER_KEY_ALIAS").orNull
+    val releaseKeyPassword = providers.environmentVariable("DAY_RECORDER_KEY_PASSWORD").orNull
+    signingConfigs {
+        if (
+            releaseKeystorePath != null && releaseKeystorePassword != null &&
+            releaseKeyAlias != null && releaseKeyPassword != null
+        ) {
+            create("release") {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
@@ -70,6 +89,7 @@ dependencies {
   // Local tests: jUnit, coroutines, Android runner
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation("org.json:json:20240303")
 
   // Instrumented tests: jUnit rules and runners
   androidTestImplementation(libs.androidx.test.core)
