@@ -81,4 +81,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Day Recorder v${VERSION_NAME} (Build ${VERSION_CODE})" \
-            --notes "Signed Wear OS and Android phone builds. The phone companion adds selectable recording storage, archive inventory, confirmed purge, and non-destructive age/storage warnings. Both apps provide user-initiated GitHub updates with checksum and signing-certificate verification."
+            --notes "Security update for the Wear OS recorder and Android phone companion. Transfer bookkeeping is now ephemeral: app data is excluded from backup and device migration, duplicate deliveries are acknowledged only when the archived recording still exists with the expected size and SHA-256, and newly stored recordings are reverified before the watch may delete its copy. Both APKs are signed and support user-initiated GitHub updates with checksum and signing-certificate verification."
