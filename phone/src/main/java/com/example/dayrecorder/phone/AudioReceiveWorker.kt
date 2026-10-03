@@ -8,7 +8,6 @@ import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
-import java.io.InputStream
 
 class AudioReceiveWorker(
   context: Context,
@@ -19,6 +18,7 @@ class AudioReceiveWorker(
   private val recordingStorage = PhoneRecordingStorage(applicationContext)
 
   override fun doWork(): Result {
+    discardLegacyReceipts()
     var failed = false
     val items = try {
       Tasks.await(dataClient.getDataItems())
@@ -51,18 +51,21 @@ class AudioReceiveWorker(
     val expectedHash = data.getString(TransferProtocol.KEY_SHA256) ?: return false
     val recordedAt = data.getLong(TransferProtocol.KEY_RECORDED_AT)
 
-    if (!prefs.getBoolean(PhoneContract.RECEIVED_PREFIX + expectedHash, false)) {
-      val asset = data.getAsset(TransferProtocol.KEY_ASSET) ?: return false
-      val response = Tasks.await(dataClient.getFdForAsset(asset)) ?: return false
-      val input = response.inputStream
-      if (!saveVerifiedAudio(input, fileName, expectedSize, expectedHash, recordedAt)) return false
-      val saved = prefs.edit()
-        .putBoolean(PhoneContract.RECEIVED_PREFIX + expectedHash, true)
+    val archiveResult = VerifiedArchivePolicy.ensureVerified(
+      isArchivedAndVerified = {
+        recordingStorage.hasVerifiedRecording(fileName, expectedSize, expectedHash)
+      },
+      store = {
+        receiveAudio(data, fileName, expectedSize, expectedHash, recordedAt)
+      },
+    )
+    if (archiveResult == VerifiedArchiveResult.Unverified) return false
+    if (archiveResult == VerifiedArchiveResult.Stored) {
+      prefs.edit()
         .putInt(PhoneContract.KEY_RECEIVED_COUNT, prefs.getInt(PhoneContract.KEY_RECEIVED_COUNT, 0) + 1)
         .putString(PhoneContract.KEY_LAST_FILE, fileName)
         .remove(PhoneContract.KEY_LAST_ERROR)
-        .commit()
-      if (!saved) return false
+        .apply()
     }
 
     val id = fileName.removeSuffix(".m4a")
@@ -76,14 +79,18 @@ class AudioReceiveWorker(
     return true
   }
 
-  private fun saveVerifiedAudio(
-    input: InputStream,
+  private fun receiveAudio(
+    data: DataMap,
     fileName: String,
     expectedSize: Long,
     expectedHash: String,
     recordedAt: Long,
   ): Boolean {
-    return recordingStorage.saveVerifiedAudio(input, fileName, expectedSize, expectedHash, recordedAt)
+    val asset = data.getAsset(TransferProtocol.KEY_ASSET) ?: return false
+    val response = Tasks.await(dataClient.getFdForAsset(asset)) ?: return false
+    return response.inputStream.use { input ->
+      recordingStorage.saveVerifiedAudio(input, fileName, expectedSize, expectedHash, recordedAt)
+    }
   }
 
   private fun sanitizeFileName(name: String): String? =
@@ -91,5 +98,11 @@ class AudioReceiveWorker(
 
   private fun saveError(error: Throwable) {
     prefs.edit().putString(PhoneContract.KEY_LAST_ERROR, error.message ?: error.javaClass.simpleName).apply()
+  }
+
+  private fun discardLegacyReceipts() {
+    val legacyKeys = prefs.all.keys.filter { it.startsWith(PhoneContract.LEGACY_RECEIVED_PREFIX) }
+    if (legacyKeys.isEmpty()) return
+    prefs.edit().also { editor -> legacyKeys.forEach(editor::remove) }.apply()
   }
 }

@@ -41,8 +41,13 @@ generated build artifacts.
 - Uses non-urgent Wear OS Data Layer assets so Google Play services can batch
   delivery for better battery life. Ending the day queues the final chunk
   immediately.
-- The phone verifies file length and SHA-256 before acknowledging receipt. The
-  watch deletes its copy only after receiving that acknowledgement.
+- The phone verifies file length and SHA-256 before storage, then reopens and
+  verifies the published archive before acknowledging receipt. Duplicate
+  delivery is acknowledged only when the actual archived file still verifies;
+  restored bookkeeping alone can never authorize deletion of the watch copy.
+- Both apps exclude recordings and transfer state from cloud backup and
+  device-to-device app-data migration. The watch queue remains locally durable
+  across reboots only until a verified acknowledgement arrives.
 - The phone shows the number and total size of stored recordings across the
   default archive and folders previously selected through Android's system
   folder picker. Changing the destination affects future recordings and does

@@ -74,6 +74,18 @@ class PhoneRecordingStorage(private val context: Context) {
     }
   }
 
+  fun hasVerifiedRecording(
+    fileName: String,
+    expectedSize: Long,
+    expectedHash: String,
+  ): Boolean = synchronized(STORAGE_LOCK) {
+    if (!RECORDING_NAME.matches(fileName)) return false
+    if (expectedSize !in 1..MAX_RECORDING_BYTES || !SHA_256.matches(expectedHash)) return false
+    return archivedRecordings(fileName).any { recording ->
+      verifyRecording(recording.uri, expectedSize, expectedHash)
+    }
+  }
+
   fun snapshot(now: Long = System.currentTimeMillis()): PhoneStorageSnapshot = synchronized(STORAGE_LOCK) {
     val recordings = mutableListOf<StoredRecording>()
     recordings += defaultRecordings()
@@ -153,6 +165,40 @@ class PhoneRecordingStorage(private val context: Context) {
     }
   }
 
+  private fun archivedRecordings(fileName: String): List<StoredRecording> {
+    val recordings = mutableListOf<StoredRecording>()
+    recordings += defaultRecordings().filter { it.info.name == fileName }
+    knownTreeUris().forEach { value ->
+      val root = runCatching { DocumentFile.fromTreeUri(context, Uri.parse(value)) }.getOrNull()
+      if (root != null && root.canRead()) {
+        runCatching { treeRecordings(root) }
+          .onSuccess { found -> recordings += found.filter { it.info.name == fileName } }
+      }
+    }
+    return recordings.distinctBy { it.uri.toString() }
+  }
+
+  private fun verifyRecording(uri: Uri, expectedSize: Long, expectedHash: String): Boolean {
+    return runCatching {
+      val digest = MessageDigest.getInstance("SHA-256")
+      var copied = 0L
+      val input = resolver.openInputStream(uri) ?: return@runCatching false
+      input.use { source ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+          val count = source.read(buffer)
+          if (count < 0) break
+          if (count > 0) {
+            copied += count
+            if (copied > MAX_RECORDING_BYTES) return@runCatching false
+            digest.update(buffer, 0, count)
+          }
+        }
+      }
+      copied == expectedSize && digest.digest().toHex() == expectedHash
+    }.getOrDefault(false)
+  }
+
   private fun saveToMediaStore(staged: File, fileName: String, recordedAt: Long): Boolean {
     val day = checkNotNull(DAY_FORMAT.get()).format(Date(recordedAt))
     val values = ContentValues().apply {
@@ -170,8 +216,14 @@ class PhoneRecordingStorage(private val context: Context) {
     val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return false
     return try {
       resolver.openOutputStream(uri, "w")!!.use { output -> staged.inputStream().use { it.copyTo(output) } }
-      resolver.update(uri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
-      true
+      val published = resolver.update(
+        uri,
+        ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) },
+        null,
+        null,
+      ) > 0
+      if (!published) resolver.delete(uri, null, null)
+      published
     } catch (error: Throwable) {
       resolver.delete(uri, null, null)
       throw error
