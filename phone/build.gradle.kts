@@ -10,7 +10,7 @@ android {
     applicationId = "com.example.dayrecorder"
     minSdk = 29
     targetSdk = 36
-    versionCode = 4
+    versionCode = 5
     versionName = "1.2"
   }
 
@@ -51,6 +51,7 @@ kotlin {
 }
 
 dependencies {
+  implementation(project(":update-core"))
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.work.runtime.ktx)
   implementation("androidx.documentfile:documentfile:1.1.0")

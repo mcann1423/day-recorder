@@ -8,9 +8,14 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.example.dayrecorder.updatecore.ResumableUpdateDownloader
+import com.example.dayrecorder.updatecore.UpdatePackagePolicy
+import com.example.dayrecorder.updatecore.UpdateTransferProgress
+import com.example.dayrecorder.updatecore.UpdateTransferStage
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import org.json.JSONObject
 
@@ -21,6 +26,7 @@ data class UpdateRelease(
   val apkName: String,
   val apkUrl: String,
   val checksumUrl: String,
+  val apkSize: Long?,
 )
 
 sealed interface UpdateCheckResult {
@@ -29,8 +35,10 @@ sealed interface UpdateCheckResult {
 }
 
 class GitHubUpdateClient(private val context: Context) {
+  private val downloader = ResumableUpdateDownloader(userAgent = "Day-Recorder-Wear-Updater")
+
   fun check(currentVersionCode: Long): UpdateCheckResult {
-    val json = readText(LATEST_RELEASE_URL, MAX_METADATA_BYTES)
+    val json = downloader.readText(LATEST_RELEASE_URL, MAX_METADATA_BYTES)
     val release = parseRelease(json)
     return if (release.versionCode > currentVersionCode) {
       UpdateCheckResult.Available(release)
@@ -39,27 +47,53 @@ class GitHubUpdateClient(private val context: Context) {
     }
   }
 
-  fun downloadAndVerify(release: UpdateRelease): File {
-    val updateDirectory = File(context.cacheDir, "updates").also { directory ->
-      directory.mkdirs()
-      directory.listFiles()?.forEach(File::delete)
+  fun downloadAndVerify(
+    release: UpdateRelease,
+    onProgress: (UpdateTransferProgress) -> Unit = {},
+  ): File {
+    val updateDirectory = File(context.cacheDir, "updates").also(File::mkdirs)
+    val apk = File(updateDirectory, release.apkName)
+    val partial = File(updateDirectory, "${release.apkName}.part")
+    val checksumCache = File(updateDirectory, "${release.apkName}.sha256")
+    cleanUpdateDirectory(updateDirectory, setOf(apk.name, partial.name, checksumCache.name))
+
+    val cachedHash = checksumCache.takeIf(File::isFile)?.readText()?.trim()?.lowercase()
+    if (apk.isFile && cachedHash?.matches(SHA256) == true) {
+      val cachedResult = runCatching { verifyDownloadedApk(apk, release, cachedHash) }
+      if (cachedResult.isSuccess) {
+        onProgress(UpdateTransferProgress(UpdateTransferStage.READY, apk.length(), release.apkSize))
+        return apk
+      }
+      apk.delete()
+      checksumCache.delete()
     }
-    val expectedHash = readText(release.checksumUrl, MAX_CHECKSUM_BYTES)
+
+    val expectedHash = downloader.readText(release.checksumUrl, MAX_CHECKSUM_BYTES)
       .trim()
       .substringBefore(' ')
       .lowercase()
-    check(expectedHash.matches(Regex("[0-9a-f]{64}"))) { "Release checksum is invalid" }
+    check(expectedHash.matches(SHA256)) { "Release checksum is invalid" }
 
-    val apk = File(updateDirectory, release.apkName)
-    download(release.apkUrl, apk, MAX_APK_BYTES)
-    check(sha256(apk) == expectedHash) { "Downloaded APK checksum did not match" }
-    check(signingDigests(archivePackageInfo(apk)) == signingDigests(installedPackageInfo())) {
-      "Downloaded APK is not signed by the installed app"
+    downloader.download(release.apkUrl, partial, MAX_APK_BYTES, release.apkSize, onProgress)
+    onProgress(UpdateTransferProgress(UpdateTransferStage.VERIFYING, partial.length(), release.apkSize))
+    if (sha256(partial) != expectedHash) {
+      partial.delete()
+      throw IllegalStateException("Downloaded APK checksum did not match; the partial download was discarded")
     }
+    verifyDownloadedApk(partial, release, expectedHash)
+    publishVerifiedApk(partial, apk)
+    checksumCache.writeText(expectedHash)
+    onProgress(UpdateTransferProgress(UpdateTransferStage.READY, apk.length(), release.apkSize))
     return apk
   }
 
-  fun requestInstall(apk: File): InstallRequestResult {
+  fun requestInstall(release: UpdateRelease, apk: File): InstallRequestResult {
+    val expectedApk = File(File(context.cacheDir, "updates"), release.apkName).canonicalFile
+    check(apk.canonicalFile == expectedApk) { "Refusing to install an APK outside verified update storage" }
+    val checksumCache = File(expectedApk.parentFile, "${release.apkName}.sha256")
+    val expectedHash = checksumCache.takeIf(File::isFile)?.readText()?.trim()?.lowercase()
+    check(expectedHash?.matches(SHA256) == true) { "Verified update metadata is missing" }
+    verifyDownloadedApk(expectedApk, release, expectedHash)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
       context.startActivity(
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
@@ -100,6 +134,41 @@ class GitHubUpdateClient(private val context: Context) {
     return checkNotNull(info) { "Downloaded file is not a valid APK" }
   }
 
+  private fun verifyDownloadedApk(apk: File, release: UpdateRelease, expectedHash: String) {
+    check(sha256(apk) == expectedHash) { "Downloaded APK checksum did not match" }
+    val installed = installedPackageInfo()
+    val archive = archivePackageInfo(apk)
+    UpdatePackagePolicy.validate(
+      expectedPackageName = context.packageName,
+      expectedVersionCode = release.versionCode,
+      installedVersionCode = installed.longVersionCode,
+      installedSigningDigests = signingDigests(installed),
+      archivePackageName = archive.packageName,
+      archiveVersionCode = archive.longVersionCode,
+      archiveSigningDigests = signingDigests(archive),
+    )
+  }
+
+  private fun publishVerifiedApk(partial: File, apk: File) {
+    try {
+      Files.move(
+        partial.toPath(),
+        apk.toPath(),
+        StandardCopyOption.ATOMIC_MOVE,
+        StandardCopyOption.REPLACE_EXISTING,
+      )
+    } catch (_: AtomicMoveNotSupportedException) {
+      Files.move(partial.toPath(), apk.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
+  }
+
+  private fun cleanUpdateDirectory(directory: File, keepNames: Set<String>) {
+    val staleBefore = System.currentTimeMillis() - STALE_UPDATE_MILLIS
+    directory.listFiles()?.forEach { file ->
+      if (file.name !in keepNames || file.lastModified() < staleBefore) file.delete()
+    }
+  }
+
   private fun signingDigests(info: PackageInfo): Set<String> =
     checkNotNull(info.signingInfo) { "APK has no signing information" }
       .apkContentsSigners
@@ -112,7 +181,9 @@ class GitHubUpdateClient(private val context: Context) {
     private const val MAX_METADATA_BYTES = 512 * 1_024L
     private const val MAX_CHECKSUM_BYTES = 4 * 1_024L
     private const val MAX_APK_BYTES = 100 * 1_024 * 1_024L
+    private const val STALE_UPDATE_MILLIS = 24L * 60L * 60L * 1_000L
     private val APK_NAME = Regex("day-recorder-watch-v([0-9.]+)-build([0-9]+)-release\\.apk")
+    private val SHA256 = Regex("[0-9a-f]{64}")
 
     fun parseRelease(json: String): UpdateRelease {
       val root = JSONObject(json)
@@ -124,6 +195,7 @@ class GitHubUpdateClient(private val context: Context) {
       var checksumUrl: String? = null
       var versionName: String? = null
       var versionCode: Long? = null
+      var apkSize: Long? = null
 
       for (index in 0 until assets.length()) {
         val asset = assets.getJSONObject(index)
@@ -131,16 +203,17 @@ class GitHubUpdateClient(private val context: Context) {
         val match = APK_NAME.matchEntire(name)
         if (match != null) {
           apkName = name
-          apkUrl = asset.getString("browser_download_url")
+          apkUrl = requireHttps(asset.getString("browser_download_url"))
           versionName = match.groupValues[1]
           versionCode = match.groupValues[2].toLong()
+          apkSize = asset.optLong("size").takeIf { it > 0L }
         }
       }
       val requiredApkName = checkNotNull(apkName) { "Release has no compatible watch APK" }
       for (index in 0 until assets.length()) {
         val asset = assets.getJSONObject(index)
         if (asset.getString("name") == "$requiredApkName.sha256") {
-          checksumUrl = asset.getString("browser_download_url")
+          checksumUrl = requireHttps(asset.getString("browser_download_url"))
           break
         }
       }
@@ -151,55 +224,13 @@ class GitHubUpdateClient(private val context: Context) {
         apkName = requiredApkName,
         apkUrl = checkNotNull(apkUrl),
         checksumUrl = checkNotNull(checksumUrl) { "Release has no APK checksum" },
+        apkSize = apkSize,
       )
     }
 
-    private fun readText(url: String, maxBytes: Long): String =
-      connect(url).useConnection { connection ->
-        val bytes = connection.inputStream.use { input ->
-          val output = java.io.ByteArrayOutputStream()
-          input.copyToLimited(output, maxBytes)
-          output.toByteArray()
-        }
-        bytes.toString(Charsets.UTF_8)
-      }
-
-    private fun download(url: String, destination: File, maxBytes: Long) {
-      connect(url).useConnection { connection ->
-        connection.inputStream.use { input ->
-          destination.outputStream().use { output -> input.copyToLimited(output, maxBytes) }
-        }
-      }
-    }
-
-    private fun connect(url: String): HttpURLConnection =
-      (URL(url).openConnection() as HttpURLConnection).apply {
-        connectTimeout = 15_000
-        readTimeout = 60_000
-        instanceFollowRedirects = true
-        setRequestProperty("Accept", "application/vnd.github+json")
-        setRequestProperty("User-Agent", "Day-Recorder-Wear-Updater")
-        connect()
-        check(responseCode in 200..299) { "Update server returned HTTP $responseCode" }
-      }
-
-    private inline fun <T> HttpURLConnection.useConnection(block: (HttpURLConnection) -> T): T =
-      try {
-        block(this)
-      } finally {
-        disconnect()
-      }
-
-    private fun java.io.InputStream.copyToLimited(output: java.io.OutputStream, maxBytes: Long) {
-      val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-      var total = 0L
-      while (true) {
-        val count = read(buffer)
-        if (count < 0) return
-        total += count
-        check(total <= maxBytes) { "Downloaded file is larger than allowed" }
-        output.write(buffer, 0, count)
-      }
+    private fun requireHttps(url: String): String {
+      check(java.net.URI(url).scheme.equals("https", ignoreCase = true)) { "Release URL must use HTTPS" }
+      return url
     }
 
     private fun sha256(file: File): String = file.inputStream().use { input ->

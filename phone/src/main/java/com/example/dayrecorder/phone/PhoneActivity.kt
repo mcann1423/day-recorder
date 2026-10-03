@@ -311,14 +311,19 @@ class PhoneActivity : Activity() {
   }
 
   private fun installUpdate(release: PhoneUpdateRelease) {
-    setUpdateBusy(true, "Downloading and verifying…")
+    setUpdateBusy(true, "Preparing download…")
     thread(name = "phone-update-download") {
-      runCatching { updateClient.downloadAndVerify(release) }
+      runCatching {
+        updateClient.downloadAndVerify(release) { progress ->
+          runOnUiThread { setUpdateBusy(true, progress.displayText()) }
+        }
+      }
         .onSuccess { apk ->
           runOnUiThread {
-            val message = when (updateClient.requestInstall(apk)) {
+            val message = when (updateClient.requestInstall(release, apk)) {
               PhoneInstallRequestResult.Launched -> "Confirm the update in Android Installer"
-              PhoneInstallRequestResult.PermissionRequired -> "Allow this source, then tap Install again"
+              PhoneInstallRequestResult.PermissionRequired ->
+                "Allow this source, return here, then tap Install again. The verified download will be reused."
             }
             setUpdateBusy(false, message)
           }

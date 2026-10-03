@@ -146,13 +146,20 @@ fun RecorderScreen(
       },
       onInstallUpdate = { release ->
         updateBusy = true
-        updateMessage = "Downloading and verifying…"
+        updateMessage = "Preparing download…"
         scope.launch {
-          runCatching { withContext(Dispatchers.IO) { updateClient.downloadAndVerify(release) } }
+          runCatching {
+            withContext(Dispatchers.IO) {
+              updateClient.downloadAndVerify(release) { progress ->
+                scope.launch { updateMessage = progress.displayText() }
+              }
+            }
+          }
             .onSuccess { apk ->
-              updateMessage = when (updateClient.requestInstall(apk)) {
+              updateMessage = when (updateClient.requestInstall(release, apk)) {
                 InstallRequestResult.Launched -> "Confirm the update in Android Installer"
-                InstallRequestResult.PermissionRequired -> "Allow this source, then tap Install again"
+                InstallRequestResult.PermissionRequired ->
+                  "Allow this source, return here, then tap Install again. The verified download will be reused."
               }
             }
             .onFailure { error -> updateMessage = error.message ?: "Update download failed" }

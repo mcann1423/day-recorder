@@ -32,3 +32,4 @@ plugins {
 rootProject.name = "Day Recorder"
 include(":app")
 include(":phone")
+include(":update-core")
