@@ -57,15 +57,9 @@ class GitHubUpdateClient(private val context: Context) {
     val checksumCache = File(updateDirectory, "${release.apkName}.sha256")
     cleanUpdateDirectory(updateDirectory, setOf(apk.name, partial.name, checksumCache.name))
 
-    val cachedHash = checksumCache.takeIf(File::isFile)?.readText()?.trim()?.lowercase()
-    if (apk.isFile && cachedHash?.matches(SHA256) == true) {
-      val cachedResult = runCatching { verifyDownloadedApk(apk, release, cachedHash) }
-      if (cachedResult.isSuccess) {
-        onProgress(UpdateTransferProgress(UpdateTransferStage.READY, apk.length(), release.apkSize))
-        return apk
-      }
-      apk.delete()
-      checksumCache.delete()
+    verifiedCachedApk(release)?.let { cachedApk ->
+      onProgress(UpdateTransferProgress(UpdateTransferStage.READY, cachedApk.length(), release.apkSize))
+      return cachedApk
     }
 
     val expectedHash = downloader.readText(release.checksumUrl, MAX_CHECKSUM_BYTES)
@@ -85,6 +79,18 @@ class GitHubUpdateClient(private val context: Context) {
     checksumCache.writeText(expectedHash)
     onProgress(UpdateTransferProgress(UpdateTransferStage.READY, apk.length(), release.apkSize))
     return apk
+  }
+
+  fun verifiedCachedApk(release: UpdateRelease): File? {
+    val updateDirectory = File(context.cacheDir, "updates")
+    val apk = File(updateDirectory, release.apkName)
+    val checksumCache = File(updateDirectory, "${release.apkName}.sha256")
+    val cachedHash = checksumCache.takeIf(File::isFile)?.readText()?.trim()?.lowercase()
+    if (!apk.isFile || cachedHash?.matches(SHA256) != true) return null
+    if (runCatching { verifyDownloadedApk(apk, release, cachedHash) }.isSuccess) return apk
+    apk.delete()
+    checksumCache.delete()
+    return null
   }
 
   fun requestInstall(release: UpdateRelease, apk: File): InstallRequestResult {

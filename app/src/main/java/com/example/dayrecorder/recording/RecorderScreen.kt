@@ -32,6 +32,10 @@ import androidx.compose.ui.unit.dp
 import com.example.dayrecorder.update.GitHubUpdateClient
 import com.example.dayrecorder.update.InstallRequestResult
 import com.example.dayrecorder.update.UpdateCheckResult
+import com.example.dayrecorder.update.UpdateDownloadPhase
+import com.example.dayrecorder.update.UpdateDownloadService
+import com.example.dayrecorder.update.UpdateDownloadStatus
+import com.example.dayrecorder.update.UpdateDownloadStore
 import com.example.dayrecorder.update.UpdateRelease
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -64,19 +68,25 @@ fun RecorderScreen(
   var lastRetentionAction by remember { mutableStateOf("") }
   var showSettings by remember { mutableStateOf(false) }
   var confirmPurge by remember { mutableStateOf(false) }
-  var updateBusy by remember { mutableStateOf(false) }
+  var updateActionBusy by remember { mutableStateOf(false) }
   var updateMessage by remember { mutableStateOf("") }
   var availableUpdate by remember { mutableStateOf<UpdateRelease?>(null) }
+  var updateDownloadStatus by remember { mutableStateOf(UpdateDownloadStatus()) }
   var powerSaveMode by remember { mutableStateOf(isPowerSaveMode()) }
   val scope = rememberCoroutineScope()
   val updateClient = remember(context) { GitHubUpdateClient(context) }
+  val updateStore = remember(context) { UpdateDownloadStore(context) }
   val packageInfo = remember(context) {
     context.packageManager.getPackageInfo(context.packageName, 0)
   }
   val versionName = packageInfo.versionName ?: "Unknown"
   val buildNumber = packageInfo.longVersionCode.toString()
+  val updateBusy = updateActionBusy || updateDownloadStatus.isBusy
 
   LaunchedEffect(Unit) {
+    if (updateStore.clearIfInstalled(packageInfo.longVersionCode)) {
+      UpdateDownloadService.cancelCompletedNotification(context)
+    }
     withContext(Dispatchers.IO) { RecordingRetentionManager(context).maintain() }
     while (true) {
       val prefs = context.getSharedPreferences(RecorderContract.PREFS, Context.MODE_PRIVATE)
@@ -94,6 +104,10 @@ fun RecorderScreen(
       retentionPurgedCount = prefs.getInt(RecorderContract.KEY_RETENTION_PURGED_COUNT, 0)
       lastRetentionAction = prefs.getString(RecorderContract.KEY_LAST_RETENTION_ACTION, "") ?: ""
       powerSaveMode = isPowerSaveMode()
+      updateDownloadStatus = updateStore.snapshot()
+      if (!updateActionBusy && updateDownloadStatus.phase != UpdateDownloadPhase.IDLE) {
+        updateMessage = updateDownloadStatus.message
+      }
       delay(1_000)
     }
   }
@@ -124,7 +138,7 @@ fun RecorderScreen(
       onBack = { showSettings = false },
       onPurge = { confirmPurge = true },
       onCheckUpdate = {
-        updateBusy = true
+        updateActionBusy = true
         updateMessage = "Checking GitHub…"
         scope.launch {
           runCatching { withContext(Dispatchers.IO) { updateClient.check(packageInfo.longVersionCode) } }
@@ -132,7 +146,13 @@ fun RecorderScreen(
               when (result) {
                 is UpdateCheckResult.Available -> {
                   availableUpdate = result.release
-                  updateMessage = "Version ${result.release.versionName} is available"
+                  val status = updateStore.snapshot()
+                  updateDownloadStatus = status
+                  updateMessage = if (status.isFor(result.release)) {
+                    status.message
+                  } else {
+                    "Version ${result.release.versionName} is available"
+                  }
                 }
                 is UpdateCheckResult.Current -> {
                   availableUpdate = null
@@ -141,29 +161,41 @@ fun RecorderScreen(
               }
             }
             .onFailure { error -> updateMessage = error.message ?: "Update check failed" }
-          updateBusy = false
+          updateActionBusy = false
         }
       },
       onInstallUpdate = { release ->
-        updateBusy = true
+        updateActionBusy = true
         updateMessage = "Preparing download…"
         scope.launch {
-          runCatching {
-            withContext(Dispatchers.IO) {
-              updateClient.downloadAndVerify(release) { progress ->
-                scope.launch { updateMessage = progress.displayText() }
+          val cachedApk = withContext(Dispatchers.IO) { updateClient.verifiedCachedApk(release) }
+          if (cachedApk != null) {
+            runCatching { updateClient.requestInstall(release, cachedApk) }
+              .onSuccess { result ->
+                updateMessage = when (result) {
+                  InstallRequestResult.Launched -> {
+                    UpdateDownloadService.cancelCompletedNotification(context)
+                    "Confirm the update in Android Installer"
+                  }
+                  InstallRequestResult.PermissionRequired ->
+                    "Allow this source, return here, then tap Install again. The verified download will be reused."
+                }
               }
-            }
-          }
-            .onSuccess { apk ->
-              updateMessage = when (updateClient.requestInstall(release, apk)) {
-                InstallRequestResult.Launched -> "Confirm the update in Android Installer"
-                InstallRequestResult.PermissionRequired ->
-                  "Allow this source, return here, then tap Install again. The verified download will be reused."
+              .onFailure { error -> updateMessage = error.message ?: "Could not open Android Installer" }
+          } else {
+            runCatching { UpdateDownloadService.start(context, release) }
+              .onSuccess {
+                updateDownloadStatus = UpdateDownloadStatus(
+                  phase = UpdateDownloadPhase.DOWNLOADING,
+                  versionCode = release.versionCode,
+                  apkName = release.apkName,
+                  message = "Preparing download…",
+                )
+                updateMessage = "Preparing download…"
               }
+              .onFailure { error -> updateMessage = error.message ?: "Could not start update download" }
             }
-            .onFailure { error -> updateMessage = error.message ?: "Update download failed" }
-          updateBusy = false
+          updateActionBusy = false
         }
       },
     )
