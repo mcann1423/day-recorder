@@ -16,11 +16,11 @@ class GitHubUpdateClientTest {
           {
             "name": "day-recorder-watch-v1.6-build8-release.apk",
             "size": 123456,
-            "browser_download_url": "https://example.test/watch.apk"
+            "browser_download_url": "https://github.com/mcann1423/day-recorder/releases/download/v1.6/day-recorder-watch-v1.6-build8-release.apk"
           },
           {
             "name": "day-recorder-watch-v1.6-build8-release.apk.sha256",
-            "browser_download_url": "https://example.test/watch.apk.sha256"
+            "browser_download_url": "https://github.com/mcann1423/day-recorder/releases/download/v1.6/day-recorder-watch-v1.6-build8-release.apk.sha256"
           }
         ]
       }
@@ -30,8 +30,14 @@ class GitHubUpdateClientTest {
     assertEquals("1.6", release.versionName)
     assertEquals(8, release.versionCode)
     assertEquals(123456L, release.apkSize)
-    assertEquals("https://example.test/watch.apk", release.apkUrl)
-    assertEquals("https://example.test/watch.apk.sha256", release.checksumUrl)
+    assertEquals(
+      "https://github.com/mcann1423/day-recorder/releases/download/v1.6/day-recorder-watch-v1.6-build8-release.apk",
+      release.apkUrl,
+    )
+    assertEquals(
+      "https://github.com/mcann1423/day-recorder/releases/download/v1.6/day-recorder-watch-v1.6-build8-release.apk.sha256",
+      release.checksumUrl,
+    )
   }
 
   @Test
@@ -49,7 +55,7 @@ class GitHubUpdateClientTest {
             },
             {
               "name": "day-recorder-watch-v1.6-build8-release.apk.sha256",
-              "browser_download_url": "https://example.test/watch.apk.sha256"
+              "browser_download_url": "https://github.com/mcann1423/day-recorder/releases/download/v1.6/day-recorder-watch-v1.6-build8-release.apk.sha256"
             }
           ]
         }
@@ -59,5 +65,32 @@ class GitHubUpdateClientTest {
 
     org.junit.Assert.assertTrue(error is IllegalStateException)
     org.junit.Assert.assertTrue(error?.message.orEmpty().contains("HTTPS"))
+  }
+
+  @Test
+  fun `rejects a release asset outside the expected repository`() {
+    val error = runCatching {
+      GitHubUpdateClient.parseRelease(
+        """
+        {
+          "draft": false,
+          "prerelease": false,
+          "assets": [
+            {
+              "name": "day-recorder-watch-v1.6-build8-release.apk",
+              "browser_download_url": "https://github.com/attacker/day-recorder/releases/download/v1.6/watch.apk"
+            },
+            {
+              "name": "day-recorder-watch-v1.6-build8-release.apk.sha256",
+              "browser_download_url": "https://github.com/mcann1423/day-recorder/releases/download/v1.6/watch.apk.sha256"
+            }
+          ]
+        }
+        """.trimIndent(),
+      )
+    }.exceptionOrNull()
+
+    org.junit.Assert.assertTrue(error is IllegalStateException)
+    org.junit.Assert.assertTrue(error?.message.orEmpty().contains("expected repository"))
   }
 }

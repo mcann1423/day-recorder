@@ -50,11 +50,14 @@ class ResumableUpdateDownloader(
   private val userAgent: String,
   private val maxAttempts: Int = 3,
   private val requireHttps: Boolean = true,
+  allowedHosts: Set<String> = GitHubReleaseUrlPolicy.trustedTransferHosts,
   private val connectionFactory: (URL) -> HttpURLConnection = { url ->
     url.openConnection() as HttpURLConnection
   },
   private val sleeper: (Long) -> Unit = Thread::sleep,
 ) {
+  private val allowedHosts = allowedHosts.mapTo(hashSetOf()) { it.lowercase() }
+
   fun readText(url: String, maxBytes: Long): String =
     retrying("Update server connection failed") {
       connectFollowingRedirects(url).useConnection { connection ->
@@ -251,6 +254,14 @@ class ResumableUpdateDownloader(
   private fun validateUri(uri: URI): URI {
     if (requireHttps && !uri.scheme.equals("https", ignoreCase = true)) {
       throw UpdateProtocolException("Update URL must use HTTPS")
+    }
+    val host = uri.host?.lowercase()
+      ?: throw UpdateProtocolException("Update URL has no valid host")
+    if (allowedHosts.isNotEmpty() && host !in allowedHosts) {
+      throw UpdateProtocolException("Update URL uses an untrusted host")
+    }
+    if (uri.userInfo != null || uri.port != -1) {
+      throw UpdateProtocolException("Update URL has unexpected authority information")
     }
     return uri
   }

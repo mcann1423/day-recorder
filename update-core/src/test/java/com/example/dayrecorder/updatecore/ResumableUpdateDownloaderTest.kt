@@ -118,6 +118,26 @@ class ResumableUpdateDownloaderTest {
   }
 
   @Test
+  fun `rejects a redirect to an untrusted host`() {
+    val redirect = FakeConnection(
+      byteArrayOf(),
+      responseCodeValue = HttpURLConnection.HTTP_MOVED_TEMP,
+      location = "https://malicious.example/update.apk",
+    )
+    val error = runCatching {
+      downloader(ArrayDeque(listOf(redirect))).download(
+        TEST_URL,
+        temporaryFolder.newFile("update.apk.part"),
+        100,
+        10,
+      )
+    }.exceptionOrNull()
+
+    assertTrue(error is UpdateProtocolException)
+    assertTrue(error?.message.orEmpty().contains("untrusted host"))
+  }
+
+  @Test
   fun `retries a temporary HTTP response`() {
     val temporaryFailure = FakeConnection(byteArrayOf(), responseCodeValue = 429)
     val success = FakeConnection("abcdefghij".toByteArray(StandardCharsets.UTF_8))
@@ -152,6 +172,7 @@ class ResumableUpdateDownloaderTest {
   private fun downloader(connections: ArrayDeque<FakeConnection>): ResumableUpdateDownloader =
     ResumableUpdateDownloader(
       userAgent = "test",
+      allowedHosts = setOf("example.test", "assets.example.test"),
       connectionFactory = { connections.removeFirst() },
       sleeper = {},
     )

@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.example.dayrecorder.updatecore.GitHubReleaseUrlPolicy
 import com.example.dayrecorder.updatecore.ResumableUpdateDownloader
 import com.example.dayrecorder.updatecore.UpdatePackagePolicy
 import com.example.dayrecorder.updatecore.UpdateTransferProgress
@@ -209,7 +210,7 @@ class GitHubUpdateClient(private val context: Context) {
         val match = APK_NAME.matchEntire(name)
         if (match != null) {
           apkName = name
-          apkUrl = requireHttps(asset.getString("browser_download_url"))
+          apkUrl = requireReleaseAssetUrl(asset.getString("browser_download_url"))
           versionName = match.groupValues[1]
           versionCode = match.groupValues[2].toLong()
           apkSize = asset.optLong("size").takeIf { it > 0L }
@@ -219,7 +220,7 @@ class GitHubUpdateClient(private val context: Context) {
       for (index in 0 until assets.length()) {
         val asset = assets.getJSONObject(index)
         if (asset.getString("name") == "$requiredApkName.sha256") {
-          checksumUrl = requireHttps(asset.getString("browser_download_url"))
+          checksumUrl = requireReleaseAssetUrl(asset.getString("browser_download_url"))
           break
         }
       }
@@ -234,10 +235,11 @@ class GitHubUpdateClient(private val context: Context) {
       )
     }
 
-    private fun requireHttps(url: String): String {
-      check(java.net.URI(url).scheme.equals("https", ignoreCase = true)) { "Release URL must use HTTPS" }
-      return url
-    }
+    private fun requireReleaseAssetUrl(url: String): String =
+      GitHubReleaseUrlPolicy.requireRepositoryAsset(url, REPOSITORY_OWNER, REPOSITORY_NAME)
+
+    private const val REPOSITORY_OWNER = "mcann1423"
+    private const val REPOSITORY_NAME = "day-recorder"
 
     private fun sha256(file: File): String = file.inputStream().use { input ->
       val digest = MessageDigest.getInstance("SHA-256")
