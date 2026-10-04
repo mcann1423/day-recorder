@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.dayrecorder.MainActivity
@@ -21,11 +22,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withTimeout
 
 class UpdateDownloadService : Service() {
   private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -33,6 +32,7 @@ class UpdateDownloadService : Service() {
   private var downloadJob: Job? = null
   private var activeRelease: UpdateRelease? = null
   private var wakeLock: PowerManager.WakeLock? = null
+  private var wakeLockAcquiredAt = 0L
   @Volatile private var workFinished = false
 
   override fun onCreate() {
@@ -46,7 +46,7 @@ class UpdateDownloadService : Service() {
       stopSelfResult(startId)
       return START_NOT_STICKY
     }
-    if (downloadJob?.isActive == true) return START_NOT_STICKY
+    if (downloadJob?.isActive == true) return START_REDELIVER_INTENT
 
     activeRelease = release
     workFinished = false
@@ -57,7 +57,7 @@ class UpdateDownloadService : Service() {
         notification("Preparing download…", ongoing = true),
         ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
       )
-      acquireWakeLock()
+      ensureWakeLock()
     } catch (error: Throwable) {
       workFinished = true
       store.markError(release, error.message ?: "Could not keep the update download active")
@@ -66,25 +66,36 @@ class UpdateDownloadService : Service() {
       return START_NOT_STICKY
     }
     downloadJob = serviceScope.launch { download(release, startId) }
-    return START_NOT_STICKY
+    return START_REDELIVER_INTENT
   }
 
   private suspend fun download(release: UpdateRelease, startId: Int) {
     var finalMessage = "Update download paused. Tap Install to resume."
+    val client = GitHubUpdateClient(this)
     try {
-      val apk = withTimeout(DOWNLOAD_TIMEOUT_MILLIS) {
-        runInterruptible {
-          GitHubUpdateClient(this@UpdateDownloadService).downloadAndVerify(release) { progress ->
-            publishProgress(release, progress)
+      val apk = UpdateRetryPolicy.runUntilSuccess(
+        operation = {
+          ensureWakeLock()
+          runInterruptible {
+            client.downloadAndVerify(release) { progress ->
+              ensureWakeLock()
+              publishProgress(release, progress)
+            }
           }
-        }
-      }
+        },
+        onRetry = { retryDelay ->
+          releaseWakeLock()
+          val message = UpdateRetryPolicy.message(retryDelay)
+          store.markRetrying(release, message)
+          getSystemService(NotificationManager::class.java).notify(
+            NOTIFICATION_ID,
+            notification(message, ongoing = true),
+          )
+        },
+      )
       check(apk.isFile) { "Verified update file is missing" }
       store.markReady(release)
       finalMessage = "Update verified. Open Day Recorder and tap Install again."
-    } catch (_: TimeoutCancellationException) {
-      finalMessage = "Update download timed out. Tap Install to resume."
-      store.markError(release, finalMessage)
     } catch (error: CancellationException) {
       finalMessage = if (workFinished) finalMessage else "Update download paused. Tap Install to resume."
       if (!workFinished) store.markError(release, finalMessage)
@@ -112,18 +123,23 @@ class UpdateDownloadService : Service() {
     )
   }
 
-  private fun acquireWakeLock() {
+  private fun ensureWakeLock() {
+    val now = SystemClock.elapsedRealtime()
+    if (wakeLock?.isHeld == true && now - wakeLockAcquiredAt < WAKE_LOCK_REFRESH_MILLIS) return
+    releaseWakeLock()
     wakeLock = getSystemService(PowerManager::class.java)
       .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:UpdateDownload")
       .apply {
         setReferenceCounted(false)
         acquire(WAKE_LOCK_TIMEOUT_MILLIS)
       }
+    wakeLockAcquiredAt = now
   }
 
   private fun releaseWakeLock() {
     wakeLock?.let { if (it.isHeld) it.release() }
     wakeLock = null
+    wakeLockAcquiredAt = 0L
   }
 
   private fun notification(
@@ -193,8 +209,8 @@ class UpdateDownloadService : Service() {
     private const val CHANNEL_ID = "app-updates"
     private const val NOTIFICATION_ID = 7102
     private const val PROGRESS_UNIT_BYTES = 1_024L
-    private const val DOWNLOAD_TIMEOUT_MILLIS = 10 * 60 * 1_000L
-    private const val WAKE_LOCK_TIMEOUT_MILLIS = DOWNLOAD_TIMEOUT_MILLIS + 30_000L
+    private const val WAKE_LOCK_REFRESH_MILLIS = 60_000L
+    private const val WAKE_LOCK_TIMEOUT_MILLIS = 2 * 60_000L
 
     fun start(context: Context, release: UpdateRelease) {
       val intent = Intent(context, UpdateDownloadService::class.java)

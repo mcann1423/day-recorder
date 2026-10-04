@@ -75,7 +75,7 @@ If a newer signed build exists, tap **Install** and confirm Android's package
 installer. The first update may require enabling installs from Day Recorder.
 The Android phone companion exposes the same check and install flow on its main
 screen. Each app selects only its own APK from the paired GitHub release and
-downloads it into private staging storage with bounded retries and resume support.
+downloads it into private staging storage with automatic backoff and resume support.
 Before installation, each app verifies the checksum, package name, exact build
 number, and signing certificate. A verified download is reused after the one-time
 unknown-sources permission screen instead of being downloaded again.

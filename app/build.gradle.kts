@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.dayrecorder"
         minSdk = 30
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.9"
+        versionCode = 15
+        versionName = "1.9.1"
     }
 
     val releaseKeystorePath = providers.environmentVariable("DAY_RECORDER_KEYSTORE_PATH").orNull

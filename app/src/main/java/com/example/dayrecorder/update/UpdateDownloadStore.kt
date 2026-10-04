@@ -68,6 +68,10 @@ class UpdateDownloadStore(context: Context) {
     write(release, UpdateDownloadPhase.DOWNLOADING, progress.displayText())
   }
 
+  fun markRetrying(release: UpdateRelease, message: String) {
+    write(release, UpdateDownloadPhase.DOWNLOADING, message, durable = true)
+  }
+
   fun markReady(release: UpdateRelease) {
     write(release, UpdateDownloadPhase.READY, "Update verified. Tap Install again to continue.", durable = true)
   }
