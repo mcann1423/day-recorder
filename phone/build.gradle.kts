@@ -57,5 +57,5 @@ dependencies {
   implementation("androidx.documentfile:documentfile:1.1.0")
   implementation(libs.play.services.wearable)
   testImplementation(libs.junit)
-  testImplementation("org.json:json:20240303")
+  testImplementation("org.json:json:20260814")
 }
