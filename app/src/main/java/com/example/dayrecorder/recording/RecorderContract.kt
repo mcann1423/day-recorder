@@ -38,5 +38,5 @@ object RecorderContract {
   const val SESSION_LIMIT_MS = 10 * 60 * 60 * 1_000L
   const val BATTERY_CHECK_INTERVAL_MS = 2 * 60 * 1_000L
   const val LOW_BATTERY_PERCENT = 20
-  const val DAILY_TRANSFER_HOUR = 15
+  const val TRANSFER_INTERVAL_MS = 60 * 60 * 1_000L
 }
