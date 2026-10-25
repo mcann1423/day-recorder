@@ -56,7 +56,9 @@ generated build artifacts.
 - The phone archive never deletes recordings automatically. It warns when
   recordings are at least 180 days old or consume 20 GB, and provides a
   confirmed **Purge recordings** action. Shared-media deletion uses Android's
-  system approval dialog; no broad file-access permission is requested.
+  system approval dialog. When needed to manage recordings from an earlier app
+  install, the phone asks only for Android's Music and audio access; no broad
+  file-access permission is requested.
 - Unacknowledged recordings produce a warning after three days and are removed
   after seven days or when pending storage exceeds 1 GB. Stale partial files are
   removed after 24 hours. Settings reports pending storage and provides a

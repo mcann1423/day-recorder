@@ -3,6 +3,7 @@ package com.example.dayrecorder.phone
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -37,6 +38,7 @@ class PhoneActivity : Activity() {
   private var storageSnapshot: PhoneStorageSnapshot? = null
   private var inventoryBusy = false
   private var refreshCount = 0
+  private var purgeStartedCount = 0
   private val pendingMediaDeleteBatches = ArrayDeque<List<android.net.Uri>>()
   private val handler = Handler(Looper.getMainLooper())
   private val refresh = object : Runnable {
@@ -72,9 +74,11 @@ class PhoneActivity : Activity() {
       }
     }
     purgeRecordings = Button(this).apply {
-      text = "Purge recordings"
       isEnabled = false
-      setOnClickListener { confirmPurge() }
+      setOnClickListener {
+        if (requestAudioAccessIfNeeded()) return@setOnClickListener
+        confirmPurge()
+      }
     }
     updateStatus = TextView(this).apply {
       textSize = 16f
@@ -145,6 +149,24 @@ class PhoneActivity : Activity() {
         storageStatus.text = "Purge canceled"
         refreshInventory()
       }
+      return
+    }
+  }
+
+  @Deprecated("Deprecated in Android; retained for the classic Activity implementation")
+  override fun onRequestPermissionsResult(
+    requestCode: Int,
+    permissions: Array<out String>,
+    grantResults: IntArray,
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode != REQUEST_AUDIO_ACCESS) return
+    if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+      storageStatus.text = "Audio access granted. Updating recording list…"
+      refreshInventory()
+    } else {
+      storageStatus.text = "Audio access is required to find recordings from earlier app installs."
+      updatePurgeButton()
     }
   }
 
@@ -211,7 +233,7 @@ class PhoneActivity : Activity() {
         append("\n\nWarning: ${snapshot.inaccessibleLocations} previously used folder(s) are unavailable")
       }
     }
-    purgeRecordings.isEnabled = retention.count > 0
+    updatePurgeButton()
   }
 
   private fun confirmPurge() {
@@ -227,6 +249,7 @@ class PhoneActivity : Activity() {
   private fun beginPurge() {
     setStorageControlsEnabled(false)
     storageStatus.text = "Preparing purge…"
+    purgeStartedCount = storageSnapshot?.retention?.count ?: 0
     thread(name = "phone-recording-purge") {
       runCatching { recordingStorage.defaultRecordingUris() }
         .onSuccess { defaultUris ->
@@ -265,11 +288,14 @@ class PhoneActivity : Activity() {
     thread(name = "phone-recording-purge-finish") {
       val result = runCatching {
         if (legacy) recordingStorage.purgeLegacyAll() else recordingStorage.purgeCustomRecordings()
+        recordingStorage.snapshot().retention.count
       }
       runOnUiThread {
         setStorageControlsEnabled(true)
         storageStatus.text = result.fold(
-          onSuccess = { "Purge complete" },
+          onSuccess = { remaining ->
+            PhonePurgeOutcome(purgeStartedCount, remaining).displayText()
+          },
           onFailure = { it.message ?: "Could not purge every recording" },
         )
         inventoryBusy = false
@@ -281,8 +307,33 @@ class PhoneActivity : Activity() {
   private fun setStorageControlsEnabled(enabled: Boolean) {
     chooseStorage.isEnabled = enabled
     useDefaultStorage.isEnabled = enabled
-    purgeRecordings.isEnabled = enabled && (storageSnapshot?.retention?.count ?: 0) > 0
+    updatePurgeButton(enabled)
   }
+
+  private fun updatePurgeButton(enabled: Boolean = true) {
+    val needsAudioAccess = audioReadPermission() != null && !hasAudioReadAccess()
+    purgeRecordings.text = if (needsAudioAccess) "Allow audio access to manage recordings" else "Purge recordings"
+    purgeRecordings.isEnabled = enabled && (needsAudioAccess || (storageSnapshot?.retention?.count ?: 0) > 0)
+  }
+
+  private fun requestAudioAccessIfNeeded(): Boolean {
+    val permission = audioReadPermission() ?: return false
+    if (hasAudioReadAccess()) return false
+    requestPermissions(arrayOf(permission), REQUEST_AUDIO_ACCESS)
+    return true
+  }
+
+  private fun hasAudioReadAccess(): Boolean {
+    val permission = audioReadPermission() ?: return true
+    return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+  }
+
+  private fun audioReadPermission(): String? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      android.Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+      android.Manifest.permission.READ_EXTERNAL_STORAGE
+    }
 
   private fun checkForUpdate() {
     setUpdateBusy(true, "Checking GitHub…")
@@ -354,6 +405,7 @@ class PhoneActivity : Activity() {
   companion object {
     private const val REQUEST_STORAGE_FOLDER = 1001
     private const val REQUEST_PURGE_MEDIA = 1002
+    private const val REQUEST_AUDIO_ACCESS = 1003
     private const val MAX_MEDIA_DELETE_BATCH = 2_000
   }
 }
