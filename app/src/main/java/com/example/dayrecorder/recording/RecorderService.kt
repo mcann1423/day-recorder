@@ -29,7 +29,7 @@ class RecorderService : Service() {
   private val prefs by lazy { getSharedPreferences(RecorderContract.PREFS, MODE_PRIVATE) }
   private val transferQueue by lazy { WatchTransferQueue(this) }
   private val batteryPolicy = BatteryPolicy()
-  private val dailyTransferPolicy = DailyTransferPolicy()
+  private val transferPolicy = RecurringTransferPolicy()
   private val retentionManager by lazy { RecordingRetentionManager(this) }
   private var nextBatteryCheckAt = Long.MAX_VALUE
   private var scheduledTransferAt = Long.MAX_VALUE
@@ -58,8 +58,7 @@ class RecorderService : Service() {
     requestedState = RecorderContract.STATE_RECORDING
     val now = SystemClock.elapsedRealtime()
     nextBatteryCheckAt = now
-    val transferDelay = dailyTransferPolicy.delayUntilTransfer(System.currentTimeMillis())
-    scheduledTransferAt = if (transferDelay == Long.MAX_VALUE) Long.MAX_VALUE else now + transferDelay
+    scheduledTransferAt = transferPolicy.nextTransferAt(now)
     prefs.edit()
       .putString(RecorderContract.KEY_STATE, requestedState)
       .putLong(RecorderContract.KEY_SESSION_STARTED_AT, System.currentTimeMillis())
@@ -253,9 +252,9 @@ class RecorderService : Service() {
 
   private fun maybeQueueScheduledTransfer(now: Long = SystemClock.elapsedRealtime()) {
     if (now < scheduledTransferAt || requestedState == RecorderContract.STATE_IDLE) return
-    // Mark the daily window consumed before starting asynchronous queue work so a
-    // failure cannot create a tight radio-wakeup retry loop during recording.
-    scheduledTransferAt = Long.MAX_VALUE
+    // Advance before starting asynchronous queue work so a failure cannot create
+    // a tight radio-wakeup retry loop during recording.
+    scheduledTransferAt = transferPolicy.nextTransferAt(now)
     queueTransfersNow()
   }
 

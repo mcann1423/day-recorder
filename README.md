@@ -36,8 +36,9 @@ generated build artifacts.
 - Stops automatically ten hours after the session starts.
 - Checks battery level once every two minutes and gracefully finalizes the active
   chunk, queues a final transfer, and stops at 20%.
-- Defers all watch-to-phone transfers until End Day, the ten-hour limit, an
-  error, or the automatic 20% battery cutoff.
+- Queues finalized watch-to-phone recordings in hourly, session-relative batches,
+  plus a final pass at End Day, the ten-hour limit, an error, or the automatic
+  20% battery cutoff.
 - Uses non-urgent Wear OS Data Layer assets so Google Play services can batch
   delivery for better battery life. Ending the day queues the final chunk
   immediately.

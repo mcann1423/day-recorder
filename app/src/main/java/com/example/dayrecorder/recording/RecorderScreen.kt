@@ -288,7 +288,7 @@ private fun RecorderSettingsScreen(
     StatLine("Build number", buildNumber)
     StatLine("Chunks recorded", chunkCount.toString())
     StatLine("Power saving", if (powerSaveMode) "On" else "Off")
-    StatLine("Transfers", "3:00 PM and session end")
+    StatLine("Transfers", "Every hour and session end")
     StatLine("Phone received", transferredCount.toString())
     StatLine("Queued", queuedCount.toString())
     StatLine("Watch retention", "7 days / 1 GB")
