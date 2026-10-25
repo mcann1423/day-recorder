@@ -10,7 +10,7 @@ android {
     applicationId = "com.example.dayrecorder"
     minSdk = 29
     targetSdk = 36
-    versionCode = 7
+    versionCode = 8
     versionName = "1.2"
   }
 
